@@ -9,7 +9,7 @@ import os
 import re
 import shutil
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, Tuple, Union
 
 from epub2md.utils.logging_utils import get_logger
 
@@ -40,7 +40,7 @@ def extract_and_process_images(
     stats = {
         "images_found": 0,
         "images_processed": 0,
-        "images_renamed": 0,
+        "images_moved": 0,
         "updated_content": content,
     }
     
@@ -53,11 +53,17 @@ def extract_and_process_images(
     stats["images_found"] = len(image_files)
     
     if not image_files:
+        # Still fix image paths even if no images found
+        content = fix_all_image_paths(content)
+        stats["updated_content"] = content
         return stats
     
-    # Flatten image structure if nested (OEBPS/images/..., etc.)
-    content, rename_count = flatten_image_structure(content, images_dir, image_files)
-    stats["images_renamed"] = rename_count
+    # Move all images to the root of images_dir (flatten structure)
+    moved_count = flatten_images_to_root(images_dir, image_files)
+    stats["images_moved"] = moved_count
+    
+    # Fix all image paths in content to use simple ./images/filename.jpg format
+    content = fix_all_image_paths(content)
     stats["updated_content"] = content
     
     # Optionally optimize images
@@ -84,81 +90,154 @@ def find_all_images(directory: Path) -> list[Path]:
     return images
 
 
-def flatten_image_structure(
-    content: str,
-    images_dir: Path,
-    image_files: list[Path],
-) -> Tuple[str, int]:
+def flatten_images_to_root(images_dir: Path, image_files: list[Path]) -> int:
     """
-    Flatten nested image directories and update content references.
+    Move all images from subdirectories to the images_dir root.
     
     Pandoc often extracts to paths like: images/OEBPS/images/cover.jpg
-    We want: images/cover.jpg
+    We want all images at: images/cover.jpg
     """
-    rename_count = 0
+    moved_count = 0
+    used_names = set()
+    
+    # First, collect names of images already at root level
+    for f in images_dir.iterdir():
+        if f.is_file():
+            used_names.add(f.name.lower())
     
     for image_path in image_files:
-        # Get relative path from images_dir
-        try:
-            rel_path = image_path.relative_to(images_dir)
-        except ValueError:
+        # Skip if already at root level
+        if image_path.parent == images_dir:
             continue
         
-        # Check if image is in a subdirectory
-        if len(rel_path.parts) > 1:
-            # Create new flat path
-            new_name = sanitize_image_name(image_path.name, rename_count)
-            new_path = images_dir / new_name
-            
-            # Avoid conflicts
-            while new_path.exists() and new_path != image_path:
-                rename_count += 1
-                new_name = sanitize_image_name(image_path.name, rename_count)
-                new_path = images_dir / new_name
-            
-            if new_path != image_path:
-                # Move the file
-                shutil.move(str(image_path), str(new_path))
-                rename_count += 1
-                
-                # Update content references
-                old_ref = str(rel_path).replace('\\', '/')
-                new_ref = new_name
-                
-                # Update markdown image references
-                content = content.replace(f"]({old_ref})", f"](images/{new_ref})")
-                content = content.replace(f"](images/{old_ref})", f"](images/{new_ref})")
-                
-                # Also handle OEBPS paths that might be in the content
-                content = content.replace(f"](OEBPS/images/{image_path.name})", f"](images/{new_ref})")
+        # Determine new filename (avoid conflicts)
+        new_name = image_path.name
+        base, ext = os.path.splitext(new_name)
+        counter = 1
+        
+        while new_name.lower() in used_names:
+            new_name = f"{base}_{counter}{ext}"
+            counter += 1
+        
+        new_path = images_dir / new_name
+        used_names.add(new_name.lower())
+        
+        try:
+            shutil.move(str(image_path), str(new_path))
+            moved_count += 1
+            logger.debug(f"Moved image: {image_path.name} -> {new_path.name}")
+        except Exception as e:
+            logger.warning(f"Failed to move {image_path}: {e}")
     
     # Clean up empty subdirectories
     cleanup_empty_dirs(images_dir)
     
-    return content, rename_count
+    return moved_count
 
 
-def sanitize_image_name(name: str, index: int = 0) -> str:
-    """Sanitize image filename for better organization."""
-    # Remove problematic characters
-    name = re.sub(r'[^\w\-_\.]', '_', name)
+def fix_all_image_paths(content: str) -> str:
+    """
+    Fix all image paths in content to use simple ./images/filename.jpg format.
     
-    # Add index if needed to avoid conflicts
-    if index > 0:
-        base, ext = os.path.splitext(name)
-        name = f"{base}_{index}{ext}"
+    Handles various path patterns including absolute paths with parentheses:
+    - ![](OEBPS/images/cover.jpg)
+    - ![](../path/to/Book (Series)/images/cover.jpg)
+    - ![](/home/user/project/images/OEBPS/images/cover.jpg)
+    - ![alt](path/cover.jpg){#id}
+    """
+    image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.bmp'}
     
-    return name
+    # Find all image references line by line to handle complex paths with parentheses
+    lines = content.split('\n')
+    fixed_lines = []
+    seen_images = set()  # Track unique images to remove duplicates
+    last_was_image = False
+    last_image_file = None
+    
+    for line in lines:
+        # Check for markdown image pattern at start of line (possibly with whitespace)
+        stripped = line.strip()
+        
+        # Match image pattern - handle paths with parentheses by finding the last )
+        if stripped.startswith('!['):
+            # Find the ] that closes the alt text
+            bracket_end = stripped.find(']')
+            if bracket_end > 0 and len(stripped) > bracket_end + 1:
+                # Check if followed by (
+                if stripped[bracket_end + 1] == '(':
+                    # Find the path - it ends at the last ) before any { or end of line
+                    rest = stripped[bracket_end + 2:]
+                    
+                    # Find where the path ends - look for ) that's followed by { or end
+                    paren_depth = 1
+                    path_end = -1
+                    for i, c in enumerate(rest):
+                        if c == '(':
+                            paren_depth += 1
+                        elif c == ')':
+                            paren_depth -= 1
+                            if paren_depth == 0:
+                                path_end = i
+                                break
+                    
+                    if path_end > 0:
+                        full_path = rest[:path_end]
+                        alt_text = stripped[2:bracket_end]
+                        
+                        # Extract filename from path
+                        path_parts = full_path.replace('\\', '/').split('/')
+                        filename = path_parts[-1].strip()
+                        
+                        # Remove query strings or fragments
+                        if '?' in filename:
+                            filename = filename.split('?')[0]
+                        if '#' in filename:
+                            filename = filename.split('#')[0]
+                        
+                        # Check if it's an image file
+                        _, ext = os.path.splitext(filename.lower())
+                        
+                        if ext in image_extensions and filename:
+                            # Check for duplicate consecutive images
+                            if last_was_image and last_image_file == filename:
+                                # Skip duplicate
+                                continue
+                            
+                            # Skip if we've seen this exact image already at start
+                            if filename in seen_images and len(fixed_lines) < 10:
+                                continue
+                            
+                            seen_images.add(filename)
+                            fixed_lines.append(f'![{alt_text}](./images/{filename})')
+                            last_was_image = True
+                            last_image_file = filename
+                            continue
+        
+        # Not an image line
+        if stripped:
+            last_was_image = False
+            last_image_file = None
+        
+        fixed_lines.append(line)
+    
+    return '\n'.join(fixed_lines)
 
 
 def cleanup_empty_dirs(directory: Path) -> None:
-    """Remove empty subdirectories."""
-    for subdir in list(directory.rglob('*')):
-        if subdir.is_dir():
-            try:
-                subdir.rmdir()  # Only removes if empty
-            except OSError:
-                pass  # Directory not empty, skip
+    """Remove empty subdirectories recursively."""
+    # Collect all subdirectories, deepest first
+    subdirs = sorted(
+        [d for d in directory.rglob('*') if d.is_dir()],
+        key=lambda p: len(p.parts),
+        reverse=True
+    )
+    
+    for subdir in subdirs:
+        try:
+            subdir.rmdir()  # Only removes if empty
+            logger.debug(f"Removed empty directory: {subdir}")
+        except OSError:
+            pass  # Directory not empty, skip
 
 
 def optimize_images(
@@ -179,6 +258,10 @@ def optimize_images(
     processed = 0
     
     for image_path in find_all_images(images_dir):
+        # Only process images at root level (after flattening)
+        if image_path.parent != images_dir:
+            continue
+            
         try:
             with Image.open(image_path) as img:
                 # Skip if already small enough

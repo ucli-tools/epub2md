@@ -64,20 +64,21 @@ def convert_epub_to_markdown(
     metadata = extract_epub_metadata(input_path)
     stats["metadata"] = metadata
     
-    # Step 2: Set up image extraction directory
-    images_dir = config.get("images", {}).get("extract_path", "images")
+    # Step 2: Set up image extraction directory (use "images" subdirectory of output dir)
+    images_subdir = config.get("images", {}).get("extract_path", "images")
+    images_dir = output_path.parent / images_subdir
+    
     if config.get("processing", {}).get("extract_images", True):
-        images_dir = output_path.parent / images_dir
         images_dir.mkdir(parents=True, exist_ok=True)
     
     # Step 3: Use Pandoc to convert EPUB to Markdown
     extra_args = config.get("pandoc", {}).get("extra_args", ["--wrap=none"])
     
-    # Add image extraction path
+    # Add image extraction path (use absolute path for Pandoc)
     if config.get("processing", {}).get("extract_images", True):
-        extra_args.append(f"--extract-media={images_dir}")
+        extra_args.append(f"--extract-media={images_dir.absolute()}")
     
-    # Use markdown_strict for cleaner output, then process
+    # Convert with Pandoc
     markdown_content = pypandoc.convert_file(
         str(input_path),
         "markdown",

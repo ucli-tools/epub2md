@@ -23,10 +23,16 @@ def create_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  epub2md convert book.epub                   # Convert single file
-  epub2md convert book.epub output.md         # Specify output file
+  epub2md convert book.epub                   # Creates book/book.md with book/images/
+  epub2md convert book.epub custom.md         # Specify custom output path
   epub2md batch ./epubs ./output              # Convert all EPUBs in directory
   epub2md batch ./epubs ./output --recursive  # Include subdirectories
+
+Output Structure:
+  book.epub  ->  book/
+                 ├── book.md
+                 └── images/
+                     └── (extracted images)
         """,
     )
     
@@ -151,10 +157,16 @@ def cmd_convert(args: argparse.Namespace) -> int:
         return 1
     
     # Determine output path
+    # Default: book.epub -> book/book.md (with book/images/)
     if args.output:
         output_path = Path(args.output)
     else:
-        output_path = input_path.with_suffix(".md")
+        # Create a directory named after the book (without extension)
+        book_name = input_path.stem
+        # Sanitize directory name (remove problematic chars)
+        safe_name = sanitize_filename(book_name)
+        book_dir = input_path.parent / safe_name
+        output_path = book_dir / f"{safe_name}.md"
     
     # Build configuration
     config = load_config(args.config)
@@ -186,6 +198,22 @@ def cmd_convert(args: argparse.Namespace) -> int:
         logger.error(f"Conversion failed: {e}")
         print(f"Error: {e}", file=sys.stderr)
         return 1
+
+
+def sanitize_filename(name: str) -> str:
+    """Sanitize a filename for use as directory name."""
+    import re
+    # Remove or replace problematic characters
+    # Keep alphanumeric, spaces, hyphens, underscores
+    sanitized = re.sub(r'[<>:"/\\|?*]', '', name)
+    # Replace multiple spaces with single space
+    sanitized = re.sub(r'\s+', ' ', sanitized)
+    # Strip leading/trailing whitespace
+    sanitized = sanitized.strip()
+    # If empty, use a default
+    if not sanitized:
+        sanitized = "output"
+    return sanitized
 
 
 def cmd_batch(args: argparse.Namespace) -> int:

@@ -10,7 +10,8 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from epub2md import __version__
+__version__ = "0.1.0"
+
 from epub2md.converter import convert_epub_to_markdown, batch_convert
 from epub2md.utils.logging_utils import setup_logging, get_logger
 
@@ -25,6 +26,7 @@ def create_parser() -> argparse.ArgumentParser:
 Examples:
   epub2md convert book.epub                   # Creates book/book.md with book/images/
   epub2md convert book.epub custom.md         # Specify custom output path
+  epub2md convert --all                       # Convert ALL EPUBs in current directory
   epub2md batch ./epubs ./output              # Convert all EPUBs in directory
   epub2md batch ./epubs ./output --recursive  # Include subdirectories
 
@@ -54,18 +56,25 @@ Output Structure:
     # Convert command
     convert_parser = subparsers.add_parser(
         "convert",
-        help="Convert a single EPUB file to Markdown",
+        help="Convert EPUB file(s) to Markdown",
     )
     convert_parser.add_argument(
         "input",
         type=str,
-        help="Path to the EPUB file to convert",
+        nargs="?",
+        help="Path to the EPUB file to convert (not required with --all)",
     )
     convert_parser.add_argument(
         "output",
         type=str,
         nargs="?",
         help="Path for output Markdown file (optional, defaults to input name with .md)",
+    )
+    convert_parser.add_argument(
+        "--all",
+        "-a",
+        action="store_true",
+        help="Convert all EPUB files in the current directory",
     )
     convert_parser.add_argument(
         "--no-images",
@@ -150,6 +159,15 @@ def cmd_convert(args: argparse.Namespace) -> int:
     """Handle the convert command."""
     logger = get_logger(__name__)
     
+    # Handle --all flag
+    if args.all:
+        return cmd_convert_all(args)
+    
+    # Single file mode requires input
+    if not args.input:
+        print("Error: Please provide an EPUB file or use --all to convert all EPUBs in current directory", file=sys.stderr)
+        return 1
+    
     input_path = Path(args.input)
     
     if not input_path.exists():
@@ -198,6 +216,57 @@ def cmd_convert(args: argparse.Namespace) -> int:
         logger.error(f"Conversion failed: {e}")
         print(f"Error: {e}", file=sys.stderr)
         return 1
+
+
+def cmd_convert_all(args: argparse.Namespace) -> int:
+    """Convert all EPUB files in the current directory."""
+    logger = get_logger(__name__)
+    
+    # Find all .epub files in current directory
+    current_dir = Path.cwd()
+    epub_files = list(current_dir.glob("*.epub"))
+    
+    if not epub_files:
+        print("No EPUB files found in current directory.", file=sys.stderr)
+        return 1
+    
+    print(f"Found {len(epub_files)} EPUB file(s) to convert...\n")
+    
+    # Build configuration
+    config = load_config(getattr(args, 'config', None))
+    
+    if args.no_images:
+        config.setdefault("processing", {})["extract_images"] = False
+    
+    if args.no_frontmatter:
+        config.setdefault("frontmatter", {})["add"] = False
+    
+    if args.optimize_images:
+        config.setdefault("images", {})["optimize"] = True
+    
+    succeeded = 0
+    failed = 0
+    
+    for epub_file in sorted(epub_files):
+        book_name = epub_file.stem
+        safe_name = sanitize_filename(book_name)
+        book_dir = epub_file.parent / safe_name
+        output_path = book_dir / f"{safe_name}.md"
+        
+        try:
+            result = convert_epub_to_markdown(epub_file, output_path, config)
+            print(f"✓ {epub_file.name}")
+            if result.get("title"):
+                print(f"  → {result['title']}")
+            succeeded += 1
+        except Exception as e:
+            logger.error(f"Failed to convert {epub_file}: {e}")
+            print(f"✗ {epub_file.name}: {e}", file=sys.stderr)
+            failed += 1
+    
+    print(f"\nConversion complete: {succeeded} succeeded, {failed} failed")
+    
+    return 0 if failed == 0 else 1
 
 
 def sanitize_filename(name: str) -> str:

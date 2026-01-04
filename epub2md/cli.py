@@ -77,6 +77,12 @@ Output Structure:
         help="Convert all EPUB files in the current directory",
     )
     convert_parser.add_argument(
+        "--recursive",
+        "-r",
+        action="store_true",
+        help="With --all, also process subdirectories recursively",
+    )
+    convert_parser.add_argument(
         "--no-images",
         action="store_true",
         help="Skip image extraction",
@@ -219,18 +225,25 @@ def cmd_convert(args: argparse.Namespace) -> int:
 
 
 def cmd_convert_all(args: argparse.Namespace) -> int:
-    """Convert all EPUB files in the current directory."""
+    """Convert all EPUB files in the current directory (and subdirectories if recursive)."""
     logger = get_logger(__name__)
     
-    # Find all .epub files in current directory
     current_dir = Path.cwd()
-    epub_files = list(current_dir.glob("*.epub"))
+    recursive = getattr(args, 'recursive', False)
+    
+    # Find all .epub files
+    if recursive:
+        epub_files = list(current_dir.rglob("*.epub"))
+    else:
+        epub_files = list(current_dir.glob("*.epub"))
     
     if not epub_files:
-        print("No EPUB files found in current directory.", file=sys.stderr)
+        location = "current directory and subdirectories" if recursive else "current directory"
+        print(f"No EPUB files found in {location}.", file=sys.stderr)
         return 1
     
-    print(f"Found {len(epub_files)} EPUB file(s) to convert...\n")
+    mode = "recursively " if recursive else ""
+    print(f"Found {len(epub_files)} EPUB file(s) to convert {mode}...\n")
     
     # Build configuration
     config = load_config(getattr(args, 'config', None))

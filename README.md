@@ -91,6 +91,13 @@ cd /path/to/your/epubs
 epub2md convert --all
 ```
 
+**Convert all EPUBs including subdirectories:**
+
+```bash
+cd /path/to/your/library
+epub2md convert --all --recursive
+```
+
 This creates a directory for each book with its markdown and images:
 
 ```
@@ -133,6 +140,11 @@ epub2md convert book.epub --optimize-images
 epub2md convert --all
 # or
 epub2md convert -a
+
+# Include all subdirectories recursively
+epub2md convert --all --recursive
+# or
+epub2md convert -a -r
 
 # With options
 epub2md convert --all --no-frontmatter

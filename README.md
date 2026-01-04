@@ -6,19 +6,29 @@ A powerful tool for converting EPUB files to clean, readable Markdown.
 
 ## Table of Contents
 
-- [Overview](#overview)
-- [Features](#features)
-- [Prerequisites](#prerequisites)
-- [Installation](#installation)
-- [Usage](#usage)
-  - [Converting a Single File](#converting-a-single-file)
-  - [Batch Conversion](#batch-conversion)
-  - [Configuration Options](#configuration-options)
-- [How It Works](#how-it-works)
-- [Examples](#examples)
-- [Troubleshooting](#troubleshooting)
-- [Contributing](#contributing)
-- [License](#license)
+- [EPUB2MD: EPUB to Markdown Converter](#epub2md-epub-to-markdown-converter)
+  - [Table of Contents](#table-of-contents)
+  - [Overview](#overview)
+  - [Features](#features)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+    - [Using pip (recommended)](#using-pip-recommended)
+    - [Using uv (faster)](#using-uv-faster)
+  - [Usage](#usage)
+    - [Quick Start - Convert All EPUBs](#quick-start---convert-all-epubs)
+    - [Converting a Single File](#converting-a-single-file)
+    - [Convert All Files in Current Directory](#convert-all-files-in-current-directory)
+    - [Batch Conversion (Different Input/Output Directories)](#batch-conversion-different-inputoutput-directories)
+    - [Configuration Options](#configuration-options)
+  - [How It Works](#how-it-works)
+  - [Examples](#examples)
+    - [Convert the God Series](#convert-the-god-series)
+    - [Sample Output](#sample-output)
+  - [Troubleshooting](#troubleshooting)
+    - [Common Issues](#common-issues)
+    - [Logging](#logging)
+  - [Contributing](#contributing)
+  - [License](#license)
 
 ## Overview
 
@@ -72,14 +82,39 @@ source .venv/bin/activate.fish  # or activate for bash/zsh
 
 ## Usage
 
+### Quick Start - Convert All EPUBs
+
+The easiest way to convert all EPUB files in the current directory:
+
+```bash
+cd /path/to/your/epubs
+epub2md convert --all
+```
+
+This creates a directory for each book with its markdown and images:
+
+```
+your_epubs/
+├── Book Title 1.epub
+├── Book Title 1/           # Created by epub2md
+│   ├── Book Title 1.md
+│   └── images/
+│       └── cover.jpg
+├── Book Title 2.epub
+├── Book Title 2/           # Created by epub2md
+│   ├── Book Title 2.md
+│   └── images/
+...
+```
+
 ### Converting a Single File
 
 ```bash
-# Basic conversion (output goes to same directory with .md extension)
+# Basic conversion - creates book-name/ directory with .md and images/
 epub2md convert book.epub
 
-# Specify output file
-epub2md convert book.epub output.md
+# Specify custom output path
+epub2md convert book.epub custom/path/output.md
 
 # Skip image extraction
 epub2md convert book.epub --no-images
@@ -91,10 +126,36 @@ epub2md convert book.epub --no-frontmatter
 epub2md convert book.epub --optimize-images
 ```
 
-### Batch Conversion
+### Convert All Files in Current Directory
 
 ```bash
-# Convert all EPUBs in a directory
+# Convert all .epub files in current directory
+epub2md convert --all
+# or
+epub2md convert -a
+
+# With options
+epub2md convert --all --no-frontmatter
+```
+
+Output shows progress for each file:
+
+```
+Found 32 EPUB file(s) to convert...
+
+✓ 01 - The God Game (The God Series Book 1).epub
+  → The God Game (The God Series Book 1)
+✓ 02 - The God Factory (The God Series Book 2).epub
+  → The God Factory (The God Series Book 2)
+...
+
+Conversion complete: 32 succeeded, 0 failed
+```
+
+### Batch Conversion (Different Input/Output Directories)
+
+```bash
+# Convert all EPUBs from one directory to another
 epub2md batch ./epubs ./output
 
 # Include subdirectories
@@ -163,15 +224,31 @@ epub2md convert book.epub --config config.json
 ### Convert the God Series
 
 ```bash
-# Create output directory
-mkdir -p ./output/god_series
+# Navigate to the series directory
+cd ./EPUB_AC_ORDERED/god_series
 
-# Batch convert all God Series books
-epub2md batch "./EPUB_AC_ORDERED/god_series" "./output/god_series" --recursive
+# Convert ALL books at once
+epub2md convert --all
 
 # Or convert a single book
-epub2md convert "./EPUB_AC_ORDERED/god_series/01 - The God Game (The God Series Book 1).epub" \
-    "./output/god_series/01_the_god_game.md"
+epub2md convert "01 - The God Game (The God Series Book 1).epub"
+```
+
+This creates:
+
+```
+god_series/
+├── 01 - The God Game (The God Series Book 1).epub
+├── 01 - The God Game (The God Series Book 1)/
+│   ├── 01 - The God Game (The God Series Book 1).md
+│   └── images/
+│       └── cover.jpg
+├── 02 - The God Factory (The God Series Book 2).epub
+├── 02 - The God Factory (The God Series Book 2)/
+│   ├── 02 - The God Factory (The God Series Book 2).md
+│   └── images/
+│       └── cover.jpg
+...
 ```
 
 ### Sample Output
